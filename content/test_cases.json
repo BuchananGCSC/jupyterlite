@@ -228,13 +228,14 @@
       "id": "ebm0d-earth",
       "group": "energy-balance",
       "source": "calibration",
-      "description": "The zero-dimensional model must reproduce Earth's global mean surface temperature of about 14 degC at 280 ppm, 1 bar, albedo 0.30. This is what A_OLR and B_OLR are tuned to.",
+      "description": "The zero-dimensional model must reproduce Earth's global mean surface temperature of about 14 degC at 280 ppm, 1 bar, 15% surface albedo and 67% cloud cover. This is what A_OLR and the cloud constants are tuned to.",
       "call": {
         "fn": "run0dEBM",
         "args": [
           {
             "co2ppm": 280,
-            "albedoWarm": 0.3,
+            "surfaceAlbedo": 0.15,
+            "cloudFraction": 0.67,
             "pressureBar": 1.0
           }
         ]
@@ -387,7 +388,7 @@
       "id": "snowball-converges-1150",
       "group": "albedo-feedback",
       "source": "numerical",
-      "description": "GUARDS A REAL BUG. The pre-2026 code ran a fixed 8 outer iterations with a hard ice threshold and returned whatever state iteration 8 held. Near the snowball bifurcation that is nowhere near converged: at S0 = 1180 it reported -22.5 degC when the converged answer is about -47 degC, a 24-degree error with no warning. These cases pin the converged values.",
+      "description": "GUARDS A REAL BUG. The pre-2026 code ran a fixed 8 outer iterations with a hard ice threshold and returned whatever state iteration 8 held. These cases pin the converged values. NOTE: the expected numbers changed when clouds became explicit -- the cloud deck masks about half the ice-albedo feedback, so the glaciated branch is much less extreme than it was.",
       "call": {
         "fn": "latProfileEquilibrium",
         "args": [
@@ -400,8 +401,8 @@
       },
       "expect": {
         "path": "tempsC.45",
-        "value": -48.1,
-        "absTol": 2.0
+        "value": -7.05,
+        "absTol": 1.5
       }
     },
     {
@@ -420,8 +421,8 @@
       },
       "expect": {
         "path": "tempsC.45",
-        "value": -46.6,
-        "absTol": 2.0
+        "value": -3.06,
+        "absTol": 1.5
       }
     },
     {
@@ -841,6 +842,206 @@
       },
       "expect": {
         "max": 0.001
+      }
+    },
+    {
+      "id": "cloud-planetary-albedo-earth",
+      "group": "clouds",
+      "source": "published",
+      "reference": "Earth's planetary albedo is 0.30",
+      "description": "ALPHA_CLOUD is solved from this, so it is a definition rather than a prediction. It is pinned because everything else in the radiation budget depends on it.",
+      "call": {
+        "fn": "cloudPlanetaryAlbedo",
+        "args": [
+          0.15,
+          0.67
+        ]
+      },
+      "expect": {
+        "value": 0.3,
+        "absTol": 0.005
+      }
+    },
+    {
+      "id": "cloud-shortwave-effect",
+      "group": "clouds",
+      "source": "published",
+      "reference": "CERES: shortwave cloud radiative effect about -47 W/m^2 globally",
+      "description": "Clouds reflect sunlight. This is the cooling half.",
+      "call": {
+        "fn": "cloudShortwaveEffect",
+        "args": [
+          0.15,
+          0.67
+        ]
+      },
+      "expect": {
+        "value": -47.0,
+        "absTol": 8.0
+      }
+    },
+    {
+      "id": "cloud-longwave-effect",
+      "group": "clouds",
+      "source": "published",
+      "reference": "CERES: longwave cloud radiative effect about +26 W/m^2 globally",
+      "description": "Clouds trap infrared. This is the warming half, and LW_CLOUD is set by it.",
+      "call": {
+        "fn": "cloudLongwave",
+        "args": [
+          0.67
+        ]
+      },
+      "expect": {
+        "value": 26.0,
+        "absTol": 2.0
+      }
+    },
+    {
+      "id": "cloud-net-effect-is-cooling",
+      "group": "clouds",
+      "source": "published",
+      "reference": "CERES: net cloud radiative effect about -20 W/m^2, i.e. clouds cool Earth on balance",
+      "description": "The sign matters more than the magnitude. If this ever comes out positive, the two cloud terms have been swapped.",
+      "call": {
+        "fn": "cloudNetEffect",
+        "args": [
+          0.15,
+          0.67
+        ]
+      },
+      "expect": {
+        "value": -20.0,
+        "absTol": 10.0
+      }
+    },
+    {
+      "id": "cloud-damps-ice-feedback",
+      "group": "clouds",
+      "source": "physical-sanity",
+      "description": "Ice acts on the surface; the cloud deck sits above it and hides part of it. The ice-free to fully-glaciated albedo swing must therefore be smaller with clouds than without. This is what keeps the model from over-reacting to small changes in sunlight or rotation.",
+      "call": {
+        "fn": "iceAlbedoSwingRatio",
+        "args": [
+          0.15,
+          0.67
+        ]
+      },
+      "expect": {
+        "max": 0.5
+      }
+    },
+    {
+      "id": "snowball-bistability-survives",
+      "group": "clouds",
+      "source": "physical-sanity",
+      "reference": "Budyko 1969, Sellers 1969: two stable climates at the same insolation",
+      "description": "Damping the ice feedback must not abolish the snowball bifurcation, which is the single most famous result to come out of this class of model. A warm start and a frozen start must still reach different equilibria somewhere below present-day sunlight.",
+      "call": {
+        "fn": "bistableAt",
+        "args": [
+          1250
+        ]
+      },
+      "expect": {
+        "value": true
+      }
+    },
+    {
+      "id": "present-earth-not-bistable",
+      "group": "clouds",
+      "source": "physical-sanity",
+      "description": "...but present-day Earth should not be sitting on the knife edge. The geological record says the current climate is robust.",
+      "call": {
+        "fn": "bistableAt",
+        "args": [
+          1361
+        ]
+      },
+      "expect": {
+        "value": false
+      }
+    },
+    {
+      "id": "diffusion-earth-calibration",
+      "group": "heat-transport",
+      "source": "calibration",
+      "description": "Earth at a 24-hour day and 1 bar must reproduce the transport coefficient the rest of the model is tuned around.",
+      "call": {
+        "fn": "diffusionFrom",
+        "args": [
+          24,
+          1.0,
+          1.0
+        ]
+      },
+      "expect": {
+        "value": 0.2,
+        "relTol": 0.001
+      }
+    },
+    {
+      "id": "diffusion-faster-spin-transports-less",
+      "group": "heat-transport",
+      "source": "published",
+      "reference": "Williams & Kasting 1997, following Farrell 1990: stronger Coriolis on a fast rotator narrows the circulation and inhibits poleward transport",
+      "call": {
+        "fn": "diffusionFrom",
+        "args": [
+          12,
+          1.0,
+          1.0
+        ]
+      },
+      "expect": {
+        "value": 0.05,
+        "relTol": 0.001
+      }
+    },
+    {
+      "id": "diffusion-thicker-atmosphere-transports-more",
+      "group": "heat-transport",
+      "source": "published",
+      "reference": "Williams & Kasting 1997: D scales with atmospheric pressure",
+      "call": {
+        "fn": "diffusionFrom",
+        "args": [
+          24,
+          4.0,
+          1.0
+        ]
+      },
+      "expect": {
+        "value": 0.8,
+        "relTol": 0.001
+      }
+    },
+    {
+      "id": "venus-is-nearly-uniform",
+      "group": "heat-transport",
+      "source": "published",
+      "reference": "Venus's surface temperature varies by only a few degrees from equator to pole",
+      "description": "GUARDS A REAL FAILURE. Before pressure fed into heat transport, the model gave Venus a 58 degC pole-to-equator contrast. A 92-bar atmosphere carries enough heat to flatten the gradient almost completely.",
+      "call": {
+        "fn": "venusContrast",
+        "args": []
+      },
+      "expect": {
+        "max": 5.0
+      }
+    },
+    {
+      "id": "locked-planets-not-rotation-scaled",
+      "group": "heat-transport",
+      "source": "published",
+      "reference": "Haqq-Misra et al.: applying the Williams & Kasting rotation dependence in a tidally locked EBM gives very large D and completely flat temperature profiles",
+      "description": "A locked planet's rotation equals its orbital period, which would give D around 25 for Proxima b. The locked solver must keep a bounded default instead, or the day-night contrast vanishes.",
+      "call": {
+        "fn": "lockedDayNightContrast",
+        "args": []
+      },
+      "expect": {
+        "min": 50
       }
     }
   ]
