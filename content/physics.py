@@ -31,48 +31,34 @@ G_GRAV = 6.674e-11
 G_EARTH = 9.807
 SEC_PER_YEAR = 3.1557e7
 
-A_OLR = 236.3   # raised when clouds became an explicit term
+A_OLR = 210.0
 B_OLR = 2.0
 A_GHG = 5.35
 CO2_REF = 280.0
 B_PRESSURE = 4.0
 P_REF = 1.0
 
-ALPHA_ICE = 0.62        # a SURFACE property; the cloud deck sits on top
+ALPHA_ICE = 0.62
 ICE_T_CENTER = -10.0
 ICE_T_WIDTH = 3.0
-
-# Clouds. ALPHA_CLOUD is solved from Earth's planetary albedo of 0.30 at
-# 67% cover over a clear-sky albedo of 0.15; LW_CLOUD is set so the
-# longwave effect matches CERES at that cover.
-ALPHA_CLOUD = 0.374
-LW_CLOUD = 39.0
 
 RHO_WATER = 1025.0
 CP_WATER = 3994.0
 MIXED_LAYER_M = 70.0
 D_SCALE = 2.86
-D_EARTH_REL = 0.20
-DAY_HOURS_EARTH = 24.0
-# Williams & Kasting 1997, following Farrell 1990. The exponent is
-# disputed: Vladilo et al. found it unsupported by 3D models and Ramirez
-# 2024 fitted coefficients to GCM runs instead. Kept at 2 because it is
-# the value with a citation attached.
-D_ROTATION_EXPONENT = 2.0
-D_LOCKED_DEFAULT = 0.20
 
 TIDAL_REF_AGE_GYR = 4.5
 TIDAL_CONST = 0.3681
 
 T_MIN_C, T_MAX_C = -100.0, 150.0
 
+# CHANGED to match physics.js: desert 0.3 -> 0.107 Mearth. At 0.3 the world
+# retains water thermally even at 5000 W/m2, so "small, therefore dry" never
+# followed from the mass; the thermal water-retention boundary is near 0.12.
 PLANET_TYPES = {
-    "earth":  dict(label="Earth-like", surfaceAlbedo=0.15, cloudFraction=0.67,
-                   transportFactor=1.0, mixedLayerM=8, massEarth=1.0),
-    "desert": dict(label="Desert World", surfaceAlbedo=0.28, cloudFraction=0.30,
-                   transportFactor=0.6, mixedLayerM=2, massEarth=0.3),
-    "ocean":  dict(label="Ocean Super-Earth", surfaceAlbedo=0.09, cloudFraction=0.80,
-                   transportFactor=1.6, mixedLayerM=40, massEarth=3.0),
+    "earth":  dict(label="Earth-like",  albedo=0.30, defaultD=0.20, mixedLayerM=8, massEarth=1.0),
+    "desert": dict(label="Mars-like",   albedo=0.35, defaultD=0.08, mixedLayerM=2, massEarth=0.107),
+    "ocean":  dict(label="Super-Earth", albedo=0.25, defaultD=0.40, mixedLayerM=40, massEarth=3.0),
 }
 
 DENSITY_PRESETS = dict(earth=5.51, mars=3.93, jupiter=1.33, saturn=0.69, neptune=1.64)
@@ -169,6 +155,131 @@ def magnetic_field_estimate(planet_mass_earth, age_gyr, is_locked):
 # Forcing and albedo
 # ---------------------------------------------------------------------
 
+K_BOLTZ = 1.380649e-23     # J/K
+AMU = 1.66054e-27          # kg
+
+# ---------------------------------------------------------------------
+# ATMOSPHERIC ESCAPE
+#
+# Escape velocity is exact. The retention threshold is a rule of thumb,
+# chosen because it reproduces the solar system: Earth keeps N2, O2, CO2
+# and H2O, loses H2, and loses He marginally, which is what Earth does.
+#
+# ir_active says whether a molecule can absorb infrared at all. N2 and O2
+# are homonuclear diatomics -- two identical atoms, perfectly symmetric,
+# no dipole moment -- so their vibration does not couple to infrared and
+# no quantity of either warms a planet. This is why there is no oxygen
+# term in the forcing. It is a fact about the molecule, not an omission.
+# ---------------------------------------------------------------------
+
+GAS_SPECIES = {
+    "H2":  dict(mu=2.016,  label="H2",  ir_active=False),
+    "He":  dict(mu=4.003,  label="He",  ir_active=False),
+    "CH4": dict(mu=16.043, label="CH4", ir_active=True),
+    "H2O": dict(mu=18.015, label="H2O", ir_active=True),
+    "N2":  dict(mu=28.013, label="N2",  ir_active=False),
+    "O2":  dict(mu=31.999, label="O2",  ir_active=False),
+    "CO2": dict(mu=44.010, label="CO2", ir_active=True),
+}
+
+JEANS_RETENTION_FACTOR = 6      # [CHOICE] v_esc / v_thermal to keep a gas
+T_EXO_EARTH_K = 1000.0          # [CHOICE] exosphere temperature at Earth's flux
+
+
+def exosphere_temperature(s0):
+    """[CHOICE] Quarter-power scaling with flux. A stand-in for XUV heating,
+    which is what really sets exospheric temperature -- and which is far
+    stronger relative to bolometric output for active M dwarfs. This therefore
+    UNDERSTATES escape around flare stars."""
+    return T_EXO_EARTH_K * (max(s0, 1e-6) / S0_SUN) ** 0.25
+
+
+def escape_velocity(mass_earth, density_gcm3):
+    r = planetary_properties(mass_earth, density_gcm3)["radiusM"]
+    return math.sqrt(2 * G_GRAV * mass_earth * M_EARTH / r)
+
+
+def thermal_speed(mu_amu, temp_k):
+    """Most probable speed of a Maxwell-Boltzmann distribution, m/s."""
+    return math.sqrt(2 * K_BOLTZ * temp_k / (mu_amu * AMU))
+
+
+def gas_retention(mass_earth, density_gcm3, s0=S0_SUN):
+    v_esc = escape_velocity(mass_earth, density_gcm3)
+    t_exo = exosphere_temperature(s0)
+    species = {}
+    for key, g in GAS_SPECIES.items():
+        v_th = thermal_speed(g["mu"], t_exo)
+        ratio = v_esc / v_th
+        species[key] = dict(key=key, label=g["label"], mu=g["mu"],
+                            thermalSpeedMS=v_th, ratio=ratio,
+                            retained=ratio >= JEANS_RETENTION_FACTOR)
+    return dict(escapeVelocityMS=v_esc, exosphereK=t_exo,
+                factor=JEANS_RETENTION_FACTOR, species=species)
+
+
+# ---------------------------------------------------------------------
+# SURFACE FROM WATER INVENTORY
+#
+# The three old planet types turn out to be exactly three points on one
+# axis: how much surface water there is. Albedo is linear in it, and heat
+# transport and heat storage interpolate through the same anchors.
+# ---------------------------------------------------------------------
+
+SURFACE_ANCHORS = [
+    dict(w=0.0, albedo=0.35, dRel=0.08, mixedLayerM=2,  label="dry rock and dust"),
+    dict(w=0.5, albedo=0.30, dRel=0.20, mixedLayerM=8,  label="mixed land and sea"),
+    dict(w=1.0, albedo=0.25, dRel=0.40, mixedLayerM=40, label="global ocean"),
+]
+
+
+def surface_properties(water_fraction):
+    w = max(0.0, min(1.0, water_fraction))
+    i = 0 if w <= 0.5 else 1
+    lo, hi = SURFACE_ANCHORS[i], SURFACE_ANCHORS[i + 1]
+    t = (w - lo["w"]) / (hi["w"] - lo["w"])
+    lerp = lambda a, b: a + (b - a) * t
+    log_lerp = lambda a, b: math.exp(lerp(math.log(a), math.log(b)))
+    return dict(waterFraction=w,
+                albedo=lerp(lo["albedo"], hi["albedo"]),
+                dRel=log_lerp(lo["dRel"], hi["dRel"]),
+                mixedLayerM=log_lerp(lo["mixedLayerM"], hi["mixedLayerM"]))
+
+
+def ozone_shielding(o2_fraction):
+    """[CHOICE] What oxygen actually does to a planet. O2 is radiatively inert,
+    but sunlight splits it and the fragments make ozone, which absorbs hard
+    ultraviolet. Order-of-magnitude thresholds; there is no photochemistry
+    anywhere in this model."""
+    if o2_fraction >= 0.02:
+        return dict(level=2, label="Strong")
+    if o2_fraction >= 0.002:
+        return dict(level=1, label="Partial")
+    return dict(level=0, label="None")
+
+
+def atmosphere_mixture(co2Ppm=0.0, o2Ppm=0.0, h2Ppm=0.0, ch4Ppm=0.0):
+    """Composition as mole fractions; nitrogen is the remainder. The mean
+    molecular weight this produces is what decides whether the planet can
+    hold the mixture at all -- the link back to gas_retention."""
+    frac = lambda ppm: max(0.0, (ppm or 0.0) / 1e6)
+    co2, o2, h2, ch4 = frac(co2Ppm), frac(o2Ppm), frac(h2Ppm), frac(ch4Ppm)
+    named = co2 + o2 + h2 + ch4
+    scale = 1.0 / named if named > 1 else 1.0
+    f = dict(CO2=co2 * scale, O2=o2 * scale, H2=h2 * scale, CH4=ch4 * scale,
+             N2=0.0 if named > 1 else 1.0 - named)
+    mu = sum(f[k] * GAS_SPECIES[k]["mu"] for k in f)
+    dominant = max(f, key=lambda k: f[k])
+    return dict(fractions=f, meanMu=mu, dominant=dominant,
+                greenhouseFraction=f["CO2"] + f["CH4"],
+                inertFraction=f["N2"] + f["O2"] + f["H2"],
+                renormalised=named > 1, ozone=ozone_shielding(f["O2"]))
+
+
+# ---------------------------------------------------------------------
+# RADIATIVE FORCING
+# ---------------------------------------------------------------------
+
 def pressure_forcing(p_bar):
     return B_PRESSURE * math.log(max(p_bar, 0.01) / P_REF)
 
@@ -177,28 +288,30 @@ def greenhouse_forcing(co2_ppm, p_bar):
     return A_GHG * math.log(co2_ppm / CO2_REF) + pressure_forcing(p_bar)
 
 
-def cloudy_albedos(surface_albedo, cloud_fraction):
-    """Effective ice and clear-surface albedos under a cloud deck.
-
-    alpha = (1-fc)*[ice*ALPHA_ICE + (1-ice)*surface] + fc*ALPHA_CLOUD,
-    which rearranges into the same two-term form the solvers already use.
-    """
-    fc = min(max(cloud_fraction, 0.0), 1.0)
-    base = (1 - fc) * surface_albedo + fc * ALPHA_CLOUD
-    return {"ice": (1 - fc) * ALPHA_ICE + fc * ALPHA_CLOUD,
-            "base": base, "planetary": base}
+CH4_REF_PPB = 0.0
 
 
-def cloud_longwave(cloud_fraction):
-    """Extra IR trapping from a cloud deck, W/m^2."""
-    return min(max(cloud_fraction, 0.0), 1.0) * LW_CLOUD
+def greenhouse_forcing_mix(pressureBar=1.0, co2Ppm=280.0, ch4Ppm=0.0):
+    """Forcing from PARTIAL pressures rather than mixing ratios. 400 ppm of CO2
+    in a 10-bar atmosphere is ten times the CO2 of 400 ppm in 1 bar and cannot
+    warm the same amount. Agrees with greenhouse_forcing() exactly at 1 bar with
+    no methane, so nothing validated at default pressure moves.
 
+    The separate pressure-broadening term is deliberately NOT added on top:
+    pressure now enters through the partial pressures of the absorbing gases,
+    and adding it again would double-count the same physics twice over.
 
-def diffusion_from(day_hours, pressure_bar=1.0, transport_factor=1.0):
-    """Heat transport from rotation, pressure, and planet type."""
-    day = max(day_hours, 0.1)
-    return (D_EARTH_REL * max(pressure_bar, 0.01)
-            * (day / DAY_HOURS_EARTH) ** D_ROTATION_EXPONENT * transport_factor)
+    Note there is no oxygen or nitrogen term, and that is not an oversight --
+    see the ir_active note on GAS_SPECIES."""
+    p_co2 = max((co2Ppm / 1e6) * pressureBar, 1e-12)
+    f_co2 = A_GHG * math.log(p_co2 / (280e-6 * P_REF))
+    ch4_ppb = max(ch4Ppm * 1000.0, 0.0)
+    f_ch4 = 0.036 * (math.sqrt(ch4_ppb) - math.sqrt(CH4_REF_PPB))
+    # Myhre's square-root fit is anchored near Earth's ~1.7 ppm. Past roughly
+    # 100 ppm this is extrapolation by orders of magnitude and runs away, where
+    # real methane saturates its bands and hazes over instead.
+    return dict(total=f_co2 + f_ch4, co2=f_co2, ch4=f_ch4,
+                partialPressureCO2Bar=p_co2, ch4BeyondFit=ch4Ppm > 100)
 
 
 def ice_fraction(t_c):
@@ -265,11 +378,8 @@ def diffusion_operator(coords, d_rel, extra_diagonal):
 
 
 def solve_with_albedo_feedback(coords, q, d_rel, base_albedo, d_f,
-                               tolerance=1e-4, max_iter=200, relaxation=0.5,
-                               day_mask=None, ice_albedo=None):
+                               tolerance=1e-4, max_iter=200, relaxation=0.5, day_mask=None):
     """Iterate the ice-albedo feedback to convergence and report whether it got there."""
-    if ice_albedo is None:
-        ice_albedo = ALPHA_ICE
     lo, di, up = diffusion_operator(coords, d_rel, B_OLR)
     frac = np.zeros(len(coords))
     temps = None
@@ -278,7 +388,7 @@ def solve_with_albedo_feedback(coords, q, d_rel, base_albedo, d_f,
     for it in range(1, max_iter + 1):
         iterations = it
         f = frac if day_mask is None else np.where(day_mask, frac, 0.0)
-        alpha = f * ice_albedo + (1 - f) * base_albedo
+        alpha = f * ALPHA_ICE + (1 - f) * base_albedo
         rhs = q * (1 - alpha) + d_f - A_OLR
         temps = tridiag_solve(lo, di, up, rhs)
         target = ice_fraction(temps)
@@ -303,19 +413,20 @@ def solve_with_albedo_feedback(coords, q, d_rel, base_albedo, d_f,
 # Models
 # ---------------------------------------------------------------------
 
-def run_0d_ebm(T0_K=288.0, co2ppm=280.0, S0=S0_SUN, surfaceAlbedo=0.15,
-               cloudFraction=0.67, pressureBar=1.0, years=300, dtYears=0.5,
-               mixedLayerM=MIXED_LAYER_M, **_ignored):
-    cl = cloudy_albedos(surfaceAlbedo, cloudFraction)
+def run_0d_ebm(T0_K=288.0, co2ppm=280.0, S0=S0_SUN, albedoWarm=0.30,
+               pressureBar=1.0, years=300, dtYears=0.5, mixedLayerM=MIXED_LAYER_M,
+               forcingWm2=None):
     heat_capacity = RHO_WATER * CP_WATER * mixedLayerM
     dt = dtYears * SEC_PER_YEAR
-    d_f = greenhouse_forcing(co2ppm, pressureBar) + cloud_longwave(cloudFraction)
+    # forcingWm2 lets a caller pass a mixture-derived forcing instead of
+    # threading every gas through the solver.
+    d_f = greenhouse_forcing(co2ppm, pressureBar) if forcingWm2 is None else forcingWm2
     t = T0_K
     times = [0.0]
     raw = [t]
     for i in range(int(years / dtYears)):
         f = float(ice_fraction(t - 273.15))
-        alb = f * cl["ice"] + (1 - f) * cl["base"]
+        alb = f * ALPHA_ICE + (1 - f) * albedoWarm
         asr = S0 * (1 - alb) / 4
         olr = A_OLR + B_OLR * (t - 273.15)
         t += dt * (asr - olr + d_f) / heat_capacity
@@ -334,33 +445,31 @@ def run_0d_ebm(T0_K=288.0, co2ppm=280.0, S0=S0_SUN, surfaceAlbedo=0.15,
 
 def lat_profile_equilibrium(S0=S0_SUN, co2ppm=280.0, obliquityDeg=23.44, planetType="earth",
                             dRel=None, pressureBar=1.0, declinationDeg=None,
-                            dayHours=DAY_HOURS_EARTH):
+                            albedo=None, forcingWm2=None):
     """Steady state at a FIXED declination. An upper bound, not a forecast."""
     t = PLANET_TYPES.get(planetType, PLANET_TYPES["earth"])
-    d = diffusion_from(dayHours, pressureBar, t["transportFactor"]) if dRel is None else dRel
+    d = t["defaultD"] if dRel is None else dRel
+    alb = t["albedo"] if albedo is None else albedo
     decl = obliquityDeg if declinationDeg is None else declinationDeg
     lats = latitude_grid()
-    cl = cloudy_albedos(t["surfaceAlbedo"], t["cloudFraction"])
     q = daily_mean_insolation(S0, decl, lats)
-    out = solve_with_albedo_feedback(
-        lats, q, d, cl["base"],
-        greenhouse_forcing(co2ppm, pressureBar) + cloud_longwave(t["cloudFraction"]),
-        ice_albedo=cl["ice"])
+    d_f = greenhouse_forcing(co2ppm, pressureBar) if forcingWm2 is None else forcingWm2
+    out = solve_with_albedo_feedback(lats, q, d, alb, d_f)
     out["lats"] = lats
     out["declinationDeg"] = decl
     return out
 
 
 def lat_profile_seasonal(S0=S0_SUN, co2ppm=280.0, obliquityDeg=23.44, planetType="earth",
-                         dRel=None, pressureBar=1.0, dayHours=DAY_HOURS_EARTH,
-                         stepsPerYear=24, spinUpYears=200,
-                         tolerance=0.02, mixedLayerM=None, albedoMemoryYears=5):
+                         dRel=None, pressureBar=1.0, stepsPerYear=24, spinUpYears=200,
+                         tolerance=0.02, mixedLayerM=None, albedoMemoryYears=5,
+                         albedo=None, forcingWm2=None):
     """Time-stepping seasonal model with heat capacity. Backward Euler, so stable at any step."""
     t = PLANET_TYPES.get(planetType, PLANET_TYPES["earth"])
-    d = diffusion_from(dayHours, pressureBar, t["transportFactor"]) if dRel is None else dRel
+    d = t["defaultD"] if dRel is None else dRel
+    alb = t["albedo"] if albedo is None else albedo
     depth = t["mixedLayerM"] if mixedLayerM is None else mixedLayerM
-    cl = cloudy_albedos(t["surfaceAlbedo"], t["cloudFraction"])
-    d_f = greenhouse_forcing(co2ppm, pressureBar) + cloud_longwave(t["cloudFraction"])
+    d_f = greenhouse_forcing(co2ppm, pressureBar) if forcingWm2 is None else forcingWm2
 
     lats = latitude_grid()
     n = len(lats)
@@ -384,7 +493,7 @@ def lat_profile_seasonal(S0=S0_SUN, co2ppm=280.0, obliquityDeg=23.44, planetType
         cycle = np.zeros((stepsPerYear, n))
         for s in range(stepsPerYear):
             f = ice_fraction(t_bar)
-            alpha = f * cl["ice"] + (1 - f) * cl["base"]
+            alpha = f * ALPHA_ICE + (1 - f) * t["albedo"]
             rhs = q_year[s] * (1 - alpha) + d_f - A_OLR + inertia * temps
             temps = tridiag_solve(lo, di, up, rhs)
             t_bar = t_bar + memory_weight * (temps - t_bar)
@@ -417,17 +526,16 @@ def lat_profile_seasonal(S0=S0_SUN, co2ppm=280.0, obliquityDeg=23.44, planetType
     }
 
 
-def tidally_locked_profile(S0=S0_SUN, co2ppm=280.0, planetType="earth", dRel=None, pressureBar=1.0):
+def tidally_locked_profile(S0=S0_SUN, co2ppm=280.0, planetType="earth", dRel=None,
+                           pressureBar=1.0, albedo=None, forcingWm2=None):
     t = PLANET_TYPES.get(planetType, PLANET_TYPES["earth"])
-    # Deliberately NOT rotation-scaled: see D_LOCKED_DEFAULT.
-    d = D_LOCKED_DEFAULT * t["transportFactor"] if dRel is None else dRel
-    cl = cloudy_albedos(t["surfaceAlbedo"], t["cloudFraction"])
+    d = t["defaultD"] if dRel is None else dRel
+    alb = t["albedo"] if albedo is None else albedo
     angles = latitude_grid()
     q = np.where(angles > 0, S0 * np.sin(np.radians(angles)), 0.0)
-    out = solve_with_albedo_feedback(
-        angles, q, d, cl["base"],
-        greenhouse_forcing(co2ppm, pressureBar) + cloud_longwave(t["cloudFraction"]),
-        day_mask=(angles > 0), ice_albedo=cl["ice"])
+    d_f = greenhouse_forcing(co2ppm, pressureBar) if forcingWm2 is None else forcingWm2
+    out = solve_with_albedo_feedback(angles, q, d, alb, d_f,
+                                     day_mask=(angles > 0))
     out["angles"] = angles
     out["substellarC"] = float(out["tempsC"][-1])
     out["antistellarC"] = float(out["tempsC"][0])
@@ -480,43 +588,6 @@ def tidalLockedMeanInsolationFraction():
     q = np.where(angles > 0, np.sin(np.radians(angles)), 0.0)
     w = np.cos(np.radians(angles))
     return float(np.sum(q * w) / np.sum(w))
-
-
-def cloudPlanetaryAlbedo(surface_albedo, cloud_fraction):
-    return cloudy_albedos(surface_albedo, cloud_fraction)["planetary"]
-
-
-def cloudShortwaveEffect(surface_albedo, cloud_fraction):
-    clear = cloudy_albedos(surface_albedo, 0.0)["planetary"]
-    cloudy = cloudy_albedos(surface_albedo, cloud_fraction)["planetary"]
-    return -(cloudy - clear) * S0_SUN / 4
-
-
-def cloudNetEffect(surface_albedo, cloud_fraction):
-    return cloudShortwaveEffect(surface_albedo, cloud_fraction) + cloud_longwave(cloud_fraction)
-
-
-def iceAlbedoSwingRatio(surface_albedo, cloud_fraction):
-    a = cloudy_albedos(surface_albedo, cloud_fraction)
-    b = cloudy_albedos(surface_albedo, 0.0)
-    return (a["ice"] - a["base"]) / (b["ice"] - b["base"])
-
-
-def bistableAt(S0):
-    warm = run_0d_ebm(T0_K=288.0, S0=S0)["equilibriumCRaw"]
-    cold = run_0d_ebm(T0_K=215.0, S0=S0)["equilibriumCRaw"]
-    return bool(abs(warm - cold) > 5)
-
-
-def venusContrast():
-    s = lat_profile_seasonal(S0=effective_s0(1.0, 0.723), pressureBar=92,
-                             co2ppm=400, dayHours=24)
-    return float(s["annualMeanC"][45] - s["annualMeanC"][90])
-
-
-def lockedDayNightContrast():
-    r = tidally_locked_profile(S0=effective_s0(0.122, 0.0485))
-    return float(r["tempsCRaw"][-1] - r["tempsCRaw"][0])
 
 
 def keplerPeriod(a_au, star_mass):
@@ -667,16 +738,6 @@ CONTRACT_FUNCTIONS = {
     "magneticLabel": magneticLabel,
     "solsticePolarMinusEquator": solsticePolarMinusEquator,
     "hemisphereAsymmetry": hemisphereAsymmetry,
-    "cloudyAlbedos": cloudy_albedos,
-    "cloudLongwave": cloud_longwave,
-    "diffusionFrom": diffusion_from,
-    "cloudPlanetaryAlbedo": cloudPlanetaryAlbedo,
-    "cloudShortwaveEffect": cloudShortwaveEffect,
-    "cloudNetEffect": cloudNetEffect,
-    "iceAlbedoSwingRatio": iceAlbedoSwingRatio,
-    "bistableAt": bistableAt,
-    "venusContrast": venusContrast,
-    "lockedDayNightContrast": lockedDayNightContrast,
     "climateZoneAt": climateZoneAt,
     "climateBandCount": climateBandCount,
     "climateBandCountDifference": climateBandCountDifference,
