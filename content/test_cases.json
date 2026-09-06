@@ -1,0 +1,847 @@
+{
+  "meta": {
+    "description": "Shared contract for the exoplanet simulator physics. Any implementation, in any language, is correct only if it reproduces every case here. The JavaScript suite in physics.test.js reads this file; a Python notebook can read the same file and check its own implementation against it.",
+    "tolerance_note": "relTol is fractional (0.02 = 2%). absTol is in the natural units of the quantity. Give one or the other.",
+    "call_schema": "call.fn is a top-level function name. call.args is the argument list; a single object argument is passed as a one-element array. expect.path indexes into the returned value with dots and integers, e.g. 'conservative.0' or 'tempsC.45'. Omit path when the return value is itself a number.",
+    "grid_note": "Latitude and substellar-angle arrays run -90 to +90 in 2-degree steps, so index 0 = -90, index 45 = 0, index 90 = +90."
+  },
+  "cases": [
+    {
+      "id": "lum-sun",
+      "group": "stars",
+      "source": "definition",
+      "description": "The Sun is 1 solar luminosity by construction.",
+      "call": {
+        "fn": "stellarLuminosity",
+        "args": [
+          1.0
+        ]
+      },
+      "expect": {
+        "value": 1.0,
+        "relTol": 0.001
+      }
+    },
+    {
+      "id": "lum-trappist1",
+      "group": "stars",
+      "source": "published",
+      "reference": "Van Grootel et al. 2018: M = 0.089 Msun, L = 5.22e-4 Lsun",
+      "description": "The very-low-mass branch of the mass-luminosity relation exists specifically to get this right. A single power law across all M dwarfs overestimates it by about 70%.",
+      "call": {
+        "fn": "stellarLuminosity",
+        "args": [
+          0.089
+        ]
+      },
+      "expect": {
+        "value": 0.000522,
+        "relTol": 0.1
+      }
+    },
+    {
+      "id": "lum-proxima",
+      "group": "stars",
+      "source": "published",
+      "reference": "Proxima Centauri: M = 0.122 Msun, L = 1.55e-3 Lsun",
+      "call": {
+        "fn": "stellarLuminosity",
+        "args": [
+          0.122
+        ]
+      },
+      "expect": {
+        "value": 0.00155,
+        "relTol": 0.1
+      }
+    },
+    {
+      "id": "teff-sun",
+      "group": "stars",
+      "source": "definition",
+      "call": {
+        "fn": "stellarTeff",
+        "args": [
+          1.0
+        ]
+      },
+      "expect": {
+        "value": 5772,
+        "absTol": 5
+      }
+    },
+    {
+      "id": "teff-trappist1",
+      "group": "stars",
+      "source": "published",
+      "reference": "TRAPPIST-1 Teff = 2566 K",
+      "description": "Teff falls out of L and R, so this also validates the mass-radius relation.",
+      "call": {
+        "fn": "stellarTeff",
+        "args": [
+          0.089
+        ]
+      },
+      "expect": {
+        "value": 2566,
+        "absTol": 150
+      }
+    },
+    {
+      "id": "teff-proxima",
+      "group": "stars",
+      "source": "published",
+      "reference": "Proxima Centauri Teff = 3042 K",
+      "call": {
+        "fn": "stellarTeff",
+        "args": [
+          0.122
+        ]
+      },
+      "expect": {
+        "value": 3042,
+        "absTol": 200
+      }
+    },
+    {
+      "id": "hz-sun-inner-conservative",
+      "group": "habitable-zone",
+      "source": "published",
+      "reference": "Kopparapu et al. 2013, runaway greenhouse limit for the Sun ~0.97-0.99 AU",
+      "description": "GUARDS A REAL BUG. The pre-2026 implementation divided by S_eff instead of its square root and returned 0.91 AU here.",
+      "call": {
+        "fn": "habitableZone",
+        "args": [
+          1.0
+        ]
+      },
+      "expect": {
+        "path": "conservative.0",
+        "value": 0.98,
+        "absTol": 0.04
+      }
+    },
+    {
+      "id": "hz-sun-outer-conservative",
+      "group": "habitable-zone",
+      "source": "published",
+      "reference": "Kopparapu et al. 2013, maximum greenhouse limit for the Sun ~1.67-1.70 AU",
+      "description": "GUARDS A REAL BUG. The pre-2026 implementation returned 2.00 AU, past even the optimistic early-Mars limit, so Mars read as comfortably habitable.",
+      "call": {
+        "fn": "habitableZone",
+        "args": [
+          1.0
+        ]
+      },
+      "expect": {
+        "path": "conservative.1",
+        "value": 1.69,
+        "absTol": 0.05
+      }
+    },
+    {
+      "id": "hz-sun-inner-optimistic",
+      "group": "habitable-zone",
+      "source": "published",
+      "reference": "Recent Venus limit for the Sun ~0.75 AU",
+      "call": {
+        "fn": "habitableZone",
+        "args": [
+          1.0
+        ]
+      },
+      "expect": {
+        "path": "optimistic.0",
+        "value": 0.75,
+        "absTol": 0.03
+      }
+    },
+    {
+      "id": "hz-sun-outer-optimistic",
+      "group": "habitable-zone",
+      "source": "published",
+      "reference": "Early Mars limit for the Sun ~1.77 AU",
+      "call": {
+        "fn": "habitableZone",
+        "args": [
+          1.0
+        ]
+      },
+      "expect": {
+        "path": "optimistic.1",
+        "value": 1.77,
+        "absTol": 0.04
+      }
+    },
+    {
+      "id": "hz-mars-outside-conservative",
+      "group": "habitable-zone",
+      "source": "physical-sanity",
+      "description": "Mars at 1.52 AU sits just inside the conservative outer edge, which is worth knowing: Mars is not outside the habitable zone, it is too small to hold the atmosphere it would need. The outer edge must not run away past the optimistic early-Mars limit either, which is what the old constants did.",
+      "call": {
+        "fn": "habitableZone",
+        "args": [
+          1.0
+        ]
+      },
+      "expect": {
+        "path": "conservative.1",
+        "min": 1.52,
+        "max": 1.75
+      }
+    },
+    {
+      "id": "hz-proxima-b",
+      "group": "habitable-zone",
+      "source": "published",
+      "reference": "Proxima b orbits at 0.0485 AU, inside the conservative habitable zone",
+      "call": {
+        "fn": "habitableZone",
+        "args": [
+          0.122
+        ]
+      },
+      "expect": {
+        "path": "conservative.0",
+        "max": 0.0485
+      }
+    },
+    {
+      "id": "seff-sun-runaway",
+      "group": "habitable-zone",
+      "source": "published",
+      "reference": "Kopparapu Table 3: S_eff at Teff = 5780 K equals the tabulated solar value",
+      "description": "At the reference temperature the polynomial reduces to its constant term, which is a direct check on the leading coefficient.",
+      "call": {
+        "fn": "seffAt",
+        "args": [
+          "runawayGreenhouse",
+          5780
+        ]
+      },
+      "expect": {
+        "value": 1.0385,
+        "relTol": 0.001
+      }
+    },
+    {
+      "id": "ebm0d-earth",
+      "group": "energy-balance",
+      "source": "calibration",
+      "description": "The zero-dimensional model must reproduce Earth's global mean surface temperature of about 14 degC at 280 ppm, 1 bar, albedo 0.30. This is what A_OLR and B_OLR are tuned to.",
+      "call": {
+        "fn": "run0dEBM",
+        "args": [
+          {
+            "co2ppm": 280,
+            "albedoWarm": 0.3,
+            "pressureBar": 1.0
+          }
+        ]
+      },
+      "expect": {
+        "path": "equilibriumC",
+        "value": 14.0,
+        "absTol": 1.5
+      }
+    },
+    {
+      "id": "ebm0d-co2-doubling",
+      "group": "energy-balance",
+      "source": "published",
+      "reference": "5.35*ln(2) = 3.7 W/m^2 for a CO2 doubling (Myhre et al. 1998); dividing by B = 2 W/m^2/K gives ~1.9 K of no-feedback warming",
+      "call": {
+        "fn": "greenhouseForcing",
+        "args": [
+          560,
+          1.0
+        ]
+      },
+      "expect": {
+        "value": 3.708,
+        "relTol": 0.01
+      }
+    },
+    {
+      "id": "ebm0d-reference-forcing-zero",
+      "group": "energy-balance",
+      "source": "definition",
+      "description": "Forcing is defined relative to 280 ppm at 1 bar, so it must vanish there.",
+      "call": {
+        "fn": "greenhouseForcing",
+        "args": [
+          280,
+          1.0
+        ]
+      },
+      "expect": {
+        "value": 0.0,
+        "absTol": 1e-09
+      }
+    },
+    {
+      "id": "seasonal-earth-global-mean",
+      "group": "seasonal",
+      "source": "calibration",
+      "description": "The one-dimensional seasonal model, area-weighted, should land within a few degrees of the zero-dimensional answer. It runs slightly cooler because seasonal sea ice raises the planetary albedo.",
+      "call": {
+        "fn": "latProfileSeasonal",
+        "args": [
+          {
+            "planetType": "earth"
+          }
+        ]
+      },
+      "expect": {
+        "path": "globalMeanC",
+        "min": 8.0,
+        "max": 16.0
+      }
+    },
+    {
+      "id": "seasonal-earth-polar-summer",
+      "group": "seasonal",
+      "source": "physical-sanity",
+      "description": "GUARDS A REAL BUG. Earth's north pole at summer solstice is near freezing. The pre-2026 tab solved for radiative equilibrium at fixed solstice insolation and reported +51 degC, because nothing in a steady-state solve knows that summer ends.",
+      "call": {
+        "fn": "latProfileSeasonal",
+        "args": [
+          {
+            "planetType": "earth"
+          }
+        ]
+      },
+      "expect": {
+        "path": "solsticeC.90",
+        "min": -30,
+        "max": 10
+      }
+    },
+    {
+      "id": "seasonal-earth-equator",
+      "group": "seasonal",
+      "source": "physical-sanity",
+      "description": "Earth's equatorial annual mean is about 26 degC.",
+      "call": {
+        "fn": "latProfileSeasonal",
+        "args": [
+          {
+            "planetType": "earth"
+          }
+        ]
+      },
+      "expect": {
+        "path": "annualMeanC.45",
+        "min": 14,
+        "max": 30
+      }
+    },
+    {
+      "id": "seasonal-earth-converges",
+      "group": "seasonal",
+      "source": "numerical",
+      "description": "The annual cycle must repeat to within the tolerance before the spin-up cap. If this fails the reported seasons are still drifting.",
+      "call": {
+        "fn": "latProfileSeasonal",
+        "args": [
+          {
+            "planetType": "earth"
+          }
+        ]
+      },
+      "expect": {
+        "path": "converged",
+        "value": true
+      }
+    },
+    {
+      "id": "seasonal-desert-swings-harder-than-ocean",
+      "group": "seasonal",
+      "source": "physical-sanity",
+      "description": "A dry world stores almost no heat and swings hard between seasons; a waterworld barely swings at all. This is the whole point of the effective-depth parameter, so it is worth pinning.",
+      "call": {
+        "fn": "seasonalAmplitudeAt45N",
+        "args": [
+          "desert"
+        ]
+      },
+      "expect": {
+        "min": 20
+      }
+    },
+    {
+      "id": "seasonal-ocean-swings-little",
+      "group": "seasonal",
+      "source": "physical-sanity",
+      "call": {
+        "fn": "seasonalAmplitudeAt45N",
+        "args": [
+          "ocean"
+        ]
+      },
+      "expect": {
+        "max": 10
+      }
+    },
+    {
+      "id": "snowball-converges-1150",
+      "group": "albedo-feedback",
+      "source": "numerical",
+      "description": "GUARDS A REAL BUG. The pre-2026 code ran a fixed 8 outer iterations with a hard ice threshold and returned whatever state iteration 8 held. Near the snowball bifurcation that is nowhere near converged: at S0 = 1180 it reported -22.5 degC when the converged answer is about -47 degC, a 24-degree error with no warning. These cases pin the converged values.",
+      "call": {
+        "fn": "latProfileEquilibrium",
+        "args": [
+          {
+            "S0": 1150,
+            "obliquityDeg": 23.44,
+            "dRel": 0.35
+          }
+        ]
+      },
+      "expect": {
+        "path": "tempsC.45",
+        "value": -48.1,
+        "absTol": 2.0
+      }
+    },
+    {
+      "id": "snowball-converges-1180",
+      "group": "albedo-feedback",
+      "source": "numerical",
+      "call": {
+        "fn": "latProfileEquilibrium",
+        "args": [
+          {
+            "S0": 1180,
+            "obliquityDeg": 23.44,
+            "dRel": 0.35
+          }
+        ]
+      },
+      "expect": {
+        "path": "tempsC.45",
+        "value": -46.6,
+        "absTol": 2.0
+      }
+    },
+    {
+      "id": "snowball-flag-set",
+      "group": "albedo-feedback",
+      "source": "numerical",
+      "description": "The solver must report convergence honestly rather than returning a number regardless.",
+      "call": {
+        "fn": "latProfileEquilibrium",
+        "args": [
+          {
+            "S0": 1180,
+            "obliquityDeg": 23.44,
+            "dRel": 0.35
+          }
+        ]
+      },
+      "expect": {
+        "path": "converged",
+        "value": true
+      }
+    },
+    {
+      "id": "tidal-lock-insolation-conserves-energy",
+      "group": "tidally-locked",
+      "source": "physical-sanity",
+      "description": "Q(a) = S0*sin(a) on the day side must average to S0/4 over the whole sphere, or the locked planet is receiving a different amount of energy than the same planet unlocked.",
+      "call": {
+        "fn": "tidalLockedMeanInsolationFraction",
+        "args": []
+      },
+      "expect": {
+        "value": 0.25,
+        "absTol": 0.002
+      }
+    },
+    {
+      "id": "tidal-lock-day-night-contrast",
+      "group": "tidally-locked",
+      "source": "physical-sanity",
+      "description": "Proxima b conditions. The substellar point must be warmer than the antistellar point by a large margin at low heat transport.",
+      "call": {
+        "fn": "tidallyLockedProfile",
+        "args": [
+          {
+            "S0": 897,
+            "dRel": 0.2
+          }
+        ]
+      },
+      "expect": {
+        "path": "substellarC",
+        "min": 20
+      }
+    },
+    {
+      "id": "tidal-lock-radius-sun",
+      "group": "orbit",
+      "source": "calibration",
+      "description": "A Sun-like star locks an Earth-mass planet inside roughly 0.4-0.5 AU over its main-sequence lifetime.",
+      "call": {
+        "fn": "tidalLockRadius",
+        "args": [
+          1.0,
+          1.0,
+          4.5
+        ]
+      },
+      "expect": {
+        "value": 0.422,
+        "relTol": 0.02
+      }
+    },
+    {
+      "id": "tidal-lock-radius-grows-with-age",
+      "group": "orbit",
+      "source": "physical-sanity",
+      "description": "GUARDS A REAL BUG. The lock radius used to ignore system age entirely while the interface offered an age control, so the slider changed the dynamo estimate but not the locking result. Locking time goes as a^6, so the radius goes as t^(1/6): weak, but not zero.",
+      "call": {
+        "fn": "tidalLockRadius",
+        "args": [
+          1.0,
+          1.0,
+          10.0
+        ]
+      },
+      "expect": {
+        "value": 0.482,
+        "relTol": 0.02
+      }
+    },
+    {
+      "id": "proxima-b-is-locked",
+      "group": "orbit",
+      "source": "published",
+      "reference": "Proxima b, a = 0.0485 AU, system age ~4.85 Gyr; expected to be tidally locked",
+      "call": {
+        "fn": "isTidallyLocked",
+        "args": [
+          0.122,
+          0.0485,
+          1.0,
+          4.85
+        ]
+      },
+      "expect": {
+        "value": true
+      }
+    },
+    {
+      "id": "earth-is-not-locked",
+      "group": "orbit",
+      "source": "physical-sanity",
+      "call": {
+        "fn": "isTidallyLocked",
+        "args": [
+          1.0,
+          1.0,
+          1.0,
+          4.5
+        ]
+      },
+      "expect": {
+        "value": false
+      }
+    },
+    {
+      "id": "kepler-earth-period",
+      "group": "calculators",
+      "source": "definition",
+      "call": {
+        "fn": "keplerPeriod",
+        "args": [
+          1.0,
+          1.0
+        ]
+      },
+      "expect": {
+        "value": 1.0,
+        "relTol": 0.001
+      }
+    },
+    {
+      "id": "kepler-jupiter-period",
+      "group": "calculators",
+      "source": "published",
+      "reference": "Jupiter: a = 5.204 AU, P = 11.86 yr",
+      "call": {
+        "fn": "keplerPeriod",
+        "args": [
+          5.204,
+          1.0
+        ]
+      },
+      "expect": {
+        "value": 11.86,
+        "relTol": 0.01
+      }
+    },
+    {
+      "id": "kepler-roundtrip",
+      "group": "calculators",
+      "source": "internal-consistency",
+      "description": "Solving for a from P must invert solving for P from a.",
+      "call": {
+        "fn": "keplerRoundTripError",
+        "args": []
+      },
+      "expect": {
+        "value": 0.0,
+        "absTol": 1e-09
+      }
+    },
+    {
+      "id": "planet-radius-earth",
+      "group": "calculators",
+      "source": "definition",
+      "description": "One Earth mass at Earth's mean density must give one Earth radius.",
+      "call": {
+        "fn": "planetRadiusEarth",
+        "args": [
+          1.0,
+          5.51
+        ]
+      },
+      "expect": {
+        "value": 1.0,
+        "relTol": 0.005
+      }
+    },
+    {
+      "id": "planet-gravity-earth",
+      "group": "calculators",
+      "source": "definition",
+      "call": {
+        "fn": "planetGravityEarth",
+        "args": [
+          1.0,
+          5.51
+        ]
+      },
+      "expect": {
+        "value": 1.0,
+        "relTol": 0.005
+      }
+    },
+    {
+      "id": "density-preset-neptune",
+      "group": "calculators",
+      "source": "published",
+      "reference": "Neptune mean density 1.64 g/cm^3",
+      "description": "GUARDS A REAL BUG. The standalone orbit calculator had a button labelled Neptune (1.64) that set the field to 1.27.",
+      "call": {
+        "fn": "densityPreset",
+        "args": [
+          "neptune"
+        ]
+      },
+      "expect": {
+        "value": 1.64,
+        "absTol": 0.01
+      }
+    },
+    {
+      "id": "magnetic-earth-strong",
+      "group": "interior",
+      "source": "physical-sanity",
+      "description": "Earth: 1 Earth mass, 4.5 Gyr, unlocked, has a strong field.",
+      "call": {
+        "fn": "magneticLabel",
+        "args": [
+          1.0,
+          4.5,
+          false
+        ]
+      },
+      "expect": {
+        "value": "Strong"
+      }
+    },
+    {
+      "id": "magnetic-mars-none",
+      "group": "interior",
+      "source": "physical-sanity",
+      "description": "Mars: 0.107 Earth masses, 4.5 Gyr, has no global field today.",
+      "call": {
+        "fn": "magneticLabel",
+        "args": [
+          0.107,
+          4.5,
+          false
+        ]
+      },
+      "expect": {
+        "value": "None"
+      }
+    },
+    {
+      "id": "insolation-equator-no-obliquity",
+      "group": "geometry",
+      "source": "analytic",
+      "description": "At zero declination the equator receives S0/pi as a daily mean.",
+      "call": {
+        "fn": "dailyMeanInsolation",
+        "args": [
+          1361.0,
+          0.0,
+          0.0
+        ]
+      },
+      "expect": {
+        "value": 433.2,
+        "relTol": 0.005
+      }
+    },
+    {
+      "id": "insolation-polar-night",
+      "group": "geometry",
+      "source": "analytic",
+      "description": "The winter pole receives nothing.",
+      "call": {
+        "fn": "dailyMeanInsolation",
+        "args": [
+          1361.0,
+          23.44,
+          -80.0
+        ]
+      },
+      "expect": {
+        "value": 0.0,
+        "absTol": 1e-09
+      }
+    },
+    {
+      "id": "insolation-polar-day-exceeds-equator",
+      "group": "geometry",
+      "source": "analytic",
+      "description": "Under 24-hour daylight the summer pole out-receives the equator on a daily-mean basis. True, and the reason a steady-state solve runs away there.",
+      "call": {
+        "fn": "solsticePolarMinusEquator",
+        "args": [
+          1361.0,
+          23.44
+        ]
+      },
+      "expect": {
+        "min": 0
+      }
+    },
+    {
+      "id": "zero-obliquity-is-symmetric",
+      "group": "geometry",
+      "source": "analytic",
+      "description": "With no axial tilt the two hemispheres must be identical. Asymmetry here means a sign error in the insolation geometry.",
+      "call": {
+        "fn": "hemisphereAsymmetry",
+        "args": [
+          0.0
+        ]
+      },
+      "expect": {
+        "value": 0.0,
+        "absTol": 1e-06
+      }
+    },
+    {
+      "id": "solstice-is-asymmetric",
+      "group": "geometry",
+      "source": "analytic",
+      "description": "GUARDS A REAL BUG. A solstice is asymmetric by definition, one hemisphere in its warm season and the other in its cold one. An earlier version plotted an annual mean under a solstice label, which is necessarily symmetric.",
+      "call": {
+        "fn": "hemisphereAsymmetry",
+        "args": [
+          23.44
+        ]
+      },
+      "expect": {
+        "min": 10
+      }
+    },
+    {
+      "id": "zones-earth-tropics",
+      "group": "climate-zones",
+      "source": "physical-sanity",
+      "description": "An Earth-like planet must have a tropical band at the equator.",
+      "call": {
+        "fn": "climateZoneAt",
+        "args": [
+          "earth",
+          0
+        ]
+      },
+      "expect": {
+        "value": "tropical"
+      }
+    },
+    {
+      "id": "zones-earth-poles-cold",
+      "group": "climate-zones",
+      "source": "physical-sanity",
+      "description": "The poles must be in one of the cold classes, never tropical or subtropical.",
+      "call": {
+        "fn": "climateZoneAt",
+        "args": [
+          "earth",
+          90
+        ]
+      },
+      "expect": {
+        "value": "continental"
+      }
+    },
+    {
+      "id": "zones-earth-varied",
+      "group": "climate-zones",
+      "source": "physical-sanity",
+      "description": "An Earth-like planet should show several distinct bands. One band from pole to pole means the classifier or the model has collapsed.",
+      "call": {
+        "fn": "climateBandCount",
+        "args": [
+          "earth"
+        ]
+      },
+      "expect": {
+        "min": 4
+      }
+    },
+    {
+      "id": "zones-dry-world-more-varied-than-waterworld",
+      "group": "climate-zones",
+      "source": "physical-sanity",
+      "description": "A dry world stores little heat and moves little of it, so it should carve into more distinct climate bands than a waterworld, which is nearly seasonless and thermally flat. An absolute band count would be an arbitrary threshold; the comparison is the actual physical claim.",
+      "call": {
+        "fn": "climateBandCountDifference",
+        "args": [
+          "desert",
+          "ocean"
+        ]
+      },
+      "expect": {
+        "min": 1
+      }
+    },
+    {
+      "id": "zones-snowball-uninhabitable",
+      "group": "climate-zones",
+      "source": "physical-sanity",
+      "description": "A planet in the snowball state must have no livable surface at all. If this returns anything above zero, the classifier is calling frozen ground habitable.",
+      "call": {
+        "fn": "climateHabitableFraction",
+        "args": [
+          "earth",
+          {
+            "S0": 900
+          }
+        ]
+      },
+      "expect": {
+        "max": 0.001
+      }
+    }
+  ]
+}
