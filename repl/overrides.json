@@ -1,21 +1,17 @@
 {
-  "jupyter-config-data": {
-    "settingsOverrides": {
-      "@jupyterlab/mainmenu-extension:plugin": {
-        "menus": [
-          {
-            "id": "jp-mainmenu-file",
-            "items": [
-              { "command": "docmanager:download", "rank": 6 }
-            ]
-          }
-        ]
-      },
-      "@jupyterlab/notebook-extension:panel": {
-        "toolbar": [
-          { "name": "download", "command": "docmanager:download", "rank": 50 }
+  "@jupyterlab/mainmenu-extension:plugin": {
+    "menus": [
+      {
+        "id": "jp-mainmenu-file",
+        "items": [
+          { "command": "docmanager:download", "rank": 6 }
         ]
       }
-    }
+    ]
+  },
+  "@jupyterlab/notebook-extension:panel": {
+    "toolbar": [
+      { "name": "download", "command": "docmanager:download", "rank": 50 }
+    ]
   }
 }
